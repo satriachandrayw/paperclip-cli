@@ -109,12 +109,14 @@ describe("Review Entrypoint", () => {
     const skill = fs.readFileSync(skillPath, "utf8");
 
     expect(skill).toContain("name: paperclip-harness-review");
-    expect(skill).toContain("disable-model-invocation: true");
     expect(skill).toContain("human-invoked");
     expect(skill).toContain("agent-agnostic");
     expect(skill).toContain("explicit local instance");
     expect(skill).toContain("read-only");
     expect(skill).toContain("one run");
     expect(skill).toContain("time window");
+    expect(skill).toContain("Deterministic evidence collection");
+    expect(skill).toContain("semantic judge");
+    expect(skill).not.toContain("paperclip-cli harness");
   });
 });

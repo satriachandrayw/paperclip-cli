@@ -1,7 +1,6 @@
 ---
 name: paperclip-harness-review
-description: Human-invoked, agent-agnostic contract for a read-only local review of a bounded Paperclip run.
-disable-model-invocation: true
+description: Human-invoked, agent-agnostic, read-only local Paperclip review. Use to collect bounded deterministic evidence and have a semantic judge review run quality, instructions, coordination, delivery, and learning.
 ---
 
 # Paperclip Harness Review
@@ -23,13 +22,19 @@ The Review Entrypoint exposes no Paperclip mutation operation. Its collector is 
 
 Pass the validated scope to the Review Entrypoint with `access: "read-only"`. Its collector may only read bounded local evidence, and its semantic judge may only assess that evidence.
 
-## Current entrypoint contract
+## Deterministic evidence collection
 
-This entrypoint establishes the portable contract used by later collection and semantic-review components:
+1. Validate the scope gate and read-only boundary.
+2. Perform deterministic evidence collection for only that scope:
+   - Run metadata, lifecycle events, tool calls, errors, retries, timestamps, disposition, and claimed completion.
+   - Relevant instruction and configuration artifacts for the selected run, agent, or company.
+   - Evidence of task understanding, controlled execution, change validation, reliable delivery, and learning capture.
+3. Normalize and redact evidence before it leaves the local instance. Preserve source paths, excerpts, timestamps, and confidence so claims remain auditable.
+4. Give the bounded evidence to a semantic judge. Use it to assess meaning and context; do not treat deterministic signals, keyword matches, or fixed score thresholds as final judgment.
+5. Return findings with evidence, uncertainty, and—when repairable—a user-copyable AI Fixing Prompt. Never apply the prompt or alter the reviewed instance.
 
-1. Validate the explicit local instance and bounded review scope.
-2. Collect only the evidence needed for that scope.
-3. Send the collected evidence to an injected semantic judge.
-4. Return a read-only review result.
+## Evidence and judgment roles
 
-Do not claim that a semantic review was completed unless the configured collector and judge both ran successfully. The Pi-first hybrid review, redaction, findings, reports, and AI Fixing Prompts are added by later slices.
+- Treat deterministic collection as an evidence layer, not a second review product. It may identify candidate anomalies such as missing instructions, failed tools, incomplete lifecycle events, weak handoffs, or absent validation evidence.
+- Treat the semantic judge as the final evaluator for relevance, severity, quality, and dimension scoring. It must distinguish observed facts from inferences and say when the available evidence is insufficient.
+- Do not claim that a semantic review was completed unless the collector and semantic judge both ran successfully. If the configured collector is unavailable, report that limitation rather than falling back to a broad instance scan.
