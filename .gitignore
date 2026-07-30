@@ -10,3 +10,6 @@ coverage/
 # Instance-specific files
 PAPERCLIP-HARNESS-MAP.md
 research/
+
+# Generated reports
+reports/
