@@ -28,3 +28,5 @@ export { analyzeQualitative, analyzeBatchQualitative } from "./qualitative-analy
 export type { QualitativeAnalysis, QualitativeBatchResult, QualitativeAggregate } from "./qualitative-analyzer.js";
 export { forensicAnalyze, patternSearch, reconstructTimeline } from "./forensic.js";
 export type { ForensicResult, PatternSearchResult, TimelineResult } from "./forensic.js";
+export { analyzeInstructionQuality, analyzeBatchInstructionQuality } from "./instruction-quality.js";
+export type { InstructionQualityReport, InstructionBatchResult, InstructionAggregate } from "./instruction-quality.js";

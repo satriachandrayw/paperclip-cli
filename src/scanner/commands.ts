@@ -4,10 +4,11 @@
 
 import { Command } from "commander";
 import { scanInstance, computeStats, type ScanOptions } from "./filesystem.js";
-import { analyzeRunLog, analyzeBatch, type BatchAnalysisOptions } from "./run-log-analyzer.js";
+import { analyzeRunLog, analyzeBatch, type BatchAnalysisOptions, type RunLogAnalysis } from "./run-log-analyzer.js";
 import { reconcile, renderMarkdown, renderJson, type ReconcileOptions } from "./reconciler.js";
 import { analyzeQualitative, analyzeBatchQualitative } from "./qualitative-analyzer.js";
 import { forensicAnalyze, patternSearch, reconstructTimeline } from "./forensic.js";
+import { analyzeInstructionQuality, analyzeBatchInstructionQuality } from "./instruction-quality.js";
 import { join } from "node:path";
 import { readdir, writeFile, mkdir } from "node:fs/promises";
 
@@ -239,6 +240,55 @@ export function registerHarnessCommands(program: Command): void {
 
   // Forensic commands
   const forensic = harness.command("forensic").description("Forensic analysis of large run-logs");
+
+  // Instruction quality command
+  harness
+    .command("instruction-quality")
+    .description("Analyze instruction file quality")
+    .requiredOption("--instance-root <path>", "Path to Paperclip instance root")
+    .option("--company-id <id>", "Analyze specific company only")
+    .option("--agent-id <id>", "Analyze specific agent only")
+    .option("--json", "Output as JSON")
+    .action(async (options: Record<string, unknown>) => {
+      try {
+        const instanceRoot = String(options.instanceRoot);
+        const scanOptions: ScanOptions = {
+          instanceRoot,
+          companyId: options.companyId ? String(options.companyId) : undefined,
+          agentId: options.agentId ? String(options.agentId) : undefined,
+          includeMemory: false,
+          includeRunLogs: true,
+          maxRunLogSample: 5,
+        };
+
+        const instanceScan = await scanInstance(scanOptions);
+        const agentScans = instanceScan.companies.flatMap(c => c.agents);
+
+        // Get run analyses for each agent
+        const runAnalysesMap = new Map<string, RunLogAnalysis[]>();
+        for (const agent of agentScans) {
+          const runs: RunLogAnalysis[] = [];
+          for (const runLog of agent.runLogs.slice(-5)) {
+            const analysis = await analyzeRunLog(runLog.path, agent.agentId, "");
+            runs.push(analysis);
+          }
+          if (runs.length > 0) {
+            runAnalysesMap.set(agent.agentId, runs);
+          }
+        }
+
+        const result = analyzeBatchInstructionQuality(agentScans, runAnalysesMap);
+
+        if (options.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          printInstructionQuality(result);
+        }
+      } catch (error) {
+        console.error("Instruction quality analysis failed:", error instanceof Error ? error.message : String(error));
+        process.exitCode = 1;
+      }
+    });
 
   forensic
     .command("analyze")
@@ -777,5 +827,37 @@ function printTimeline(result: Awaited<ReturnType<typeof reconstructTimeline>>):
 
   for (const event of result.events.slice(0, 50)) {
     console.log(`[${event.timestamp}] ${event.type}: ${event.summary}`);
+  }
+}
+
+function printInstructionQuality(result: ReturnType<typeof analyzeBatchInstructionQuality>): void {
+  console.log("\n=== Instruction Quality Analysis ===\n");
+  console.log(`Agents analyzed: ${result.aggregate.totalAgents}`);
+  console.log(`Average score: ${result.aggregate.avgScore}/100`);
+
+  console.log("\n--- File Scores ---\n");
+  for (const [name, score] of Object.entries(result.aggregate.fileScores).sort((a, b) => b[1] - a[1])) {
+    const bar = "█".repeat(Math.round(score / 10)) + "░".repeat(10 - Math.round(score / 10));
+    console.log(`  ${name.padEnd(15)} ${bar} ${score}/100`);
+  }
+
+  console.log("\n--- Per-Agent Scores ---\n");
+  for (const agent of result.agents) {
+    console.log(`Agent: ${agent.agentId.substring(0, 8)}...`);
+    console.log(`  Overall: ${agent.overallScore}/100`);
+    for (const file of agent.files) {
+      console.log(`  ${file.name.padEnd(15)} ${file.score}/100 (${file.presence})`);
+    }
+    if (agent.findings.length > 0) {
+      console.log(`  Findings: ${agent.findings.length}`);
+    }
+    console.log();
+  }
+
+  if (result.aggregate.topIssues.length > 0) {
+    console.log("--- Top Issues ---\n");
+    for (const { issue, count } of result.aggregate.topIssues) {
+      console.log(`  ${issue}: ${count} agents`);
+    }
   }
 }
