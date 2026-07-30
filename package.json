@@ -1,0 +1,50 @@
+{
+  "name": "@satriachandaryw/paperclip-cli",
+  "version": "0.1.0",
+  "description": "Standalone remote operator CLI for Paperclip control planes",
+  "type": "module",
+  "bin": {
+    "paperclip-cli": "./dist/index.js"
+  },
+  "keywords": ["paperclip", "ai", "agents", "control-plane", "cli"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/satriachandaryw/paperclip-cli"
+  },
+  "homepage": "https://github.com/satriachandaryw/paperclip-cli",
+  "bugs": {
+    "url": "https://github.com/satriachandaryw/paperclip-cli/issues"
+  },
+  "files": ["dist", "README.md", "CHANGELOG.md", "LICENSE", "integrations"],
+  "publishConfig": { "access": "public" },
+  "scripts": {
+    "build": "pnpm clean && tsc -p tsconfig.build.json && chmod +x dist/index.js",
+    "clean": "rm -rf dist",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke:remote": "pnpm build && node scripts/remote-smoke.mjs",
+    "canary:live": "pnpm build && node scripts/live-canary.mjs",
+    "prepublishOnly": "pnpm clean && pnpm build && pnpm test"
+  },
+  "dependencies": {
+    "commander": "^13.1.0",
+    "picocolors": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.12.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "pnpm": {
+    "allowBuilds": {
+      "esbuild": true
+    }
+  }
+}
