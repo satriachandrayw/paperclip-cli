@@ -117,6 +117,9 @@ describe("Review Entrypoint", () => {
     expect(skill).toContain("time window");
     expect(skill).toContain("Deterministic evidence collection");
     expect(skill).toContain("semantic judge");
+    expect(skill).toContain("AI Fixing Prompt");
+    expect(skill).toContain("Every repairable finding must include");
+    expect(skill).toContain("Validation required");
     expect(skill).not.toContain("paperclip-cli harness");
   });
 });

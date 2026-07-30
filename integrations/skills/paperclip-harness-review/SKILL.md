@@ -38,3 +38,23 @@ Pass the validated scope to the Review Entrypoint with `access: "read-only"`. It
 - Treat deterministic collection as an evidence layer, not a second review product. It may identify candidate anomalies such as missing instructions, failed tools, incomplete lifecycle events, weak handoffs, or absent validation evidence.
 - Treat the semantic judge as the final evaluator for relevance, severity, quality, and dimension scoring. It must distinguish observed facts from inferences and say when the available evidence is insufficient.
 - Do not claim that a semantic review was completed unless the collector and semantic judge both ran successfully. If the configured collector is unavailable, report that limitation rather than falling back to a broad instance scan.
+
+## AI Fixing Prompt
+
+Every repairable finding must include an `aiFixingPrompt` field in the report. Make it self-contained and user-copyable; never execute it as part of the review.
+
+```text
+You are fixing a Paperclip review finding.
+
+Finding: <title and severity>
+Review scope: <local instance and run, or agent/company and time window>
+Observed evidence: <redacted, source-attributed excerpts only>
+Why it matters: <review consequence>
+Desired outcome: <observable repaired behavior or artifact>
+Constraints: preserve existing intended behavior; make the smallest safe change; do not expose secrets or widen scope.
+Validation required: <specific tests, checks, or observable evidence that proves the repair>
+
+First inspect the relevant local context. Then propose the smallest repair plan, make changes only after the user directs you to do so, and report the validation results and any remaining uncertainty.
+```
+
+Omit `aiFixingPrompt` only for informational findings or when the evidence cannot support a safe repair. State why it was omitted.
