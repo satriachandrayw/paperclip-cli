@@ -6,3 +6,7 @@ coverage/
 .env.*
 !.env.example
 .DS_Store
+
+# Instance-specific files
+PAPERCLIP-HARNESS-MAP.md
+research/
