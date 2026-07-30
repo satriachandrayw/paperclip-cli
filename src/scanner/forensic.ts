@@ -342,8 +342,9 @@ export async function patternSearch(options: PatternSearchOptions): Promise<Patt
 
       // Fill context after for previous matches
       for (let i = Math.max(0, matches.length - contextLines); i < matches.length; i++) {
-        if (matches[i].contextAfter.length < contextLines) {
-          matches[i].contextAfter.push(truncate(line, 200));
+        const match = matches[i];
+        if (match && match.contextAfter.length < contextLines) {
+          match.contextAfter.push(truncate(line, 200));
         }
       }
 
@@ -435,9 +436,13 @@ export async function reconstructTimeline(options: TimelineOptions): Promise<Tim
   // Calculate duration
   let duration: number | undefined;
   if (events.length >= 2) {
-    const start = new Date(events[0].timestamp).getTime();
-    const end = new Date(events[events.length - 1].timestamp).getTime();
-    duration = end - start;
+    const first = events[0];
+    const last = events[events.length - 1];
+    if (first && last) {
+      const start = new Date(first.timestamp).getTime();
+      const end = new Date(last.timestamp).getTime();
+      duration = end - start;
+    }
   }
 
   return { events, duration };

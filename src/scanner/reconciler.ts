@@ -724,7 +724,7 @@ function buildAgentInventory(
       for (const file of agent.instructions.files) {
         if (file.name === "AGENTS.md") {
           const roleMatch = file.contentPreview.match(/You are the (\w+)/i);
-          if (roleMatch) role = roleMatch[1];
+          if (roleMatch && roleMatch[1]) role = roleMatch[1];
         }
       }
 

@@ -320,7 +320,8 @@ function analyzeMessage(
       usage.totalTokens += u.totalTokens || 0;
 
       if (u.cost) {
-        usage.totalCost += (u.cost as Record<string, number>).total || 0;
+        const cost = u.cost as unknown as Record<string, number>;
+        usage.totalCost += cost.total || 0;
       }
     }
 
@@ -392,22 +393,22 @@ function extractDisposition(
     if (text.includes("Paperclip Resume Delta")) {
       // Extract issue info
       const issueMatch = text.match(/- issue: (.+)/);
-      if (issueMatch) {
+      if (issueMatch && issueMatch[1]) {
         disposition.issueTitle = issueMatch[1].trim();
       }
 
       const statusMatch = text.match(/- issue status: (.+)/);
-      if (statusMatch) {
+      if (statusMatch && statusMatch[1]) {
         disposition.issueStatus = statusMatch[1].trim();
       }
 
       const priorityMatch = text.match(/- issue priority: (.+)/);
-      if (priorityMatch) {
+      if (priorityMatch && priorityMatch[1]) {
         disposition.issuePriority = priorityMatch[1].trim();
       }
 
       const reasonMatch = text.match(/- reason: (.+)/);
-      if (reasonMatch) {
+      if (reasonMatch && reasonMatch[1]) {
         disposition.reason = reasonMatch[1].trim();
       }
     }
