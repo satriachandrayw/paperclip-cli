@@ -2,7 +2,7 @@
 
 All notable changes to Paperclip CLI will be documented here.
 
-## [0.1.2] - Unreleased
+## [0.1.2] - 2026-10-07
 
 ### Fixed
 
