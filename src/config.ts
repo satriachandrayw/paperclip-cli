@@ -2,22 +2,42 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+/**
+ * Profiles are shared with the upstream `paperclipai` CLI, which stores additional
+ * keys (`persona`, `agentId`, `tokenName`, `tokenId`, `tokenCreatedAt`, ...). Unknown
+ * keys are preserved verbatim on read/write so neither tool erases the other's state.
+ */
 export interface ClientContextProfile {
   apiBase?: string;
   companyId?: string;
   apiKeyEnvVarName?: string;
+  [key: string]: unknown;
 }
 
 export interface ClientContext {
-  version: 1;
+  /** Upstream writes 2; legacy CLI-written files may say 1. Preserved as-is. */
+  version: number;
   currentProfile: string;
   profiles: Record<string, ClientContextProfile>;
 }
 
-interface AuthStore {
-  version: 1;
-  credentials: Record<string, { apiBase: string; token: string; userId?: string | null }>;
+export interface StoredCredential {
+  apiBase: string;
+  token: string;
+  userId?: string | null;
+  /** Upstream's reader requires both timestamps or it silently ignores the credential. */
+  createdAt?: string;
+  updatedAt?: string;
+  [key: string]: unknown;
 }
+
+interface AuthStore {
+  version: number;
+  credentials: Record<string, StoredCredential>;
+}
+
+/** Version this CLI writes for new context files; matches upstream's current shape. */
+export const CONTEXT_VERSION = 2;
 
 export function expandHome(value: string): string {
   if (value === "~") return os.homedir();
@@ -52,30 +72,48 @@ export function defaultContextPath(): string {
   return path.join(os.homedir(), ".paperclip", "context.json");
 }
 
+/**
+ * Upstream resolves context profiles from the nearest `.paperclip/context.json`
+ * walking up from the working directory, then falls back to the home file.
+ * Matching that order keeps both CLIs pointed at the same server and company.
+ */
+export function findContextFileFromAncestors(startDir = process.cwd()): string | null {
+  let current = path.resolve(startDir);
+  for (;;) {
+    const candidate = path.join(current, ".paperclip", "context.json");
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
 export function defaultAuthStorePath(): string {
   const override = process.env.PAPERCLIP_AUTH_STORE?.trim();
   return path.resolve(expandHome(override || path.join("~", ".paperclip", "auth.json")));
 }
 
 function contextPath(override?: string): string {
-  return path.resolve(expandHome(override || process.env.PAPERCLIP_CONTEXT || defaultContextPath()));
+  const explicit = override || process.env.PAPERCLIP_CONTEXT;
+  if (explicit) return path.resolve(expandHome(explicit));
+  return path.resolve(findContextFileFromAncestors() ?? defaultContextPath());
 }
 
 function defaultContext(): ClientContext {
-  return { version: 1, currentProfile: "default", profiles: { default: {} } };
+  return { version: CONTEXT_VERSION, currentProfile: "default", profiles: { default: {} } };
 }
 
 function normalizeProfile(value: unknown): ClientContextProfile {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const record = value as Record<string, unknown>;
-  return {
-    apiBase: typeof record.apiBase === "string" && record.apiBase.trim() ? record.apiBase.trim() : undefined,
-    companyId: typeof record.companyId === "string" && record.companyId.trim() ? record.companyId.trim() : undefined,
-    apiKeyEnvVarName:
-      typeof record.apiKeyEnvVarName === "string" && record.apiKeyEnvVarName.trim()
-        ? record.apiKeyEnvVarName.trim()
-        : undefined,
-  };
+  // Start from every stored key so upstream-only fields survive a round trip.
+  const profile: ClientContextProfile = { ...record };
+  for (const key of ["apiBase", "companyId", "apiKeyEnvVarName"] as const) {
+    const raw = record[key];
+    if (typeof raw === "string" && raw.trim()) profile[key] = raw.trim();
+    else delete profile[key];
+  }
+  return profile;
 }
 
 export function readContext(override?: string): ClientContext {
@@ -99,7 +137,10 @@ export function readContext(override?: string): ClientContext {
     ? record.currentProfile.trim()
     : "default";
   profiles[currentProfile] ??= {};
-  return { version: 1, currentProfile, profiles };
+  const version = typeof record.version === "number" && Number.isFinite(record.version)
+    ? record.version
+    : CONTEXT_VERSION;
+  return { version, currentProfile, profiles };
 }
 
 export function writeContext(value: ClientContext, override?: string): void {
@@ -117,9 +158,10 @@ export function resolveProfile(context: ClientContext, requested?: string): { na
 export function upsertProfile(name: string, patch: ClientContextProfile, override?: string): ClientContext {
   const context = readContext(override);
   const existing = context.profiles[name] ?? {};
-  const merged = { ...existing, ...patch };
+  const merged: ClientContextProfile = { ...existing, ...patch };
   for (const key of ["apiBase", "companyId", "apiKeyEnvVarName"] as const) {
-    if (merged[key] !== undefined && !merged[key]?.trim()) delete merged[key];
+    const value = merged[key];
+    if (typeof value === "string" && !value.trim()) delete merged[key];
   }
   context.profiles[name] = merged;
   writeContext(context, override);
@@ -140,8 +182,9 @@ function readAuthStore(): AuthStore {
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as Partial<AuthStore>;
     return {
-      version: 1,
-      credentials: parsed.credentials && typeof parsed.credentials === "object" ? parsed.credentials : {},
+      version: typeof parsed.version === "number" ? parsed.version : 1,
+      credentials:
+        parsed.credentials && typeof parsed.credentials === "object" ? (parsed.credentials as AuthStore["credentials"]) : {},
     };
   } catch (error) {
     throw new Error(`Unable to parse auth store ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
@@ -163,7 +206,17 @@ export function getStoredToken(apiBase: string): string | undefined {
 export function setStoredToken(apiBase: string, token: string, userId?: string | null): void {
   const normalized = normalizeApiBase(apiBase);
   const store = readAuthStore();
-  store.credentials[normalized] = { apiBase: normalized, token: token.trim(), userId: userId ?? null };
+  const existing = store.credentials[normalized];
+  const now = new Date().toISOString();
+  store.credentials[normalized] = {
+    ...existing,
+    apiBase: normalized,
+    token: token.trim(),
+    userId: userId ?? existing?.userId ?? null,
+    // Upstream's reader drops credentials without both timestamps.
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  };
   writeAuthStore(store);
 }
 
