@@ -260,40 +260,83 @@ paperclip-cli company list --json
 # Agents
 paperclip-cli agent list --company-id "$PAPERCLIP_COMPANY_ID" --json
 paperclip-cli agent get <agent-id> --json
+paperclip-cli agent pause <agent-id> --verify
+paperclip-cli agent resume <agent-id>
+paperclip-cli agent wakeup <agent-id> --reason "Unblock release review"
+paperclip-cli agent keys list <agent-id> --json
+paperclip-cli agent keys create <agent-id> --name ci-runner   # token printed once
+paperclip-cli agent keys revoke <agent-id> <key-id> --yes
+paperclip-cli agent terminate <agent-id> --yes
 
 # Projects, goals, and routines
 paperclip-cli project list --company-id "$PAPERCLIP_COMPANY_ID" --json
+paperclip-cli project create --company-id "$PAPERCLIP_COMPANY_ID" --name "Docs migration" --lead-agent-id <agent-id>
+paperclip-cli project update <project-id> --status in_progress
 paperclip-cli goal list --company-id "$PAPERCLIP_COMPANY_ID" --json
+paperclip-cli goal create --company-id "$PAPERCLIP_COMPANY_ID" --title "Cut support backlog 50%" --level company
 paperclip-cli routine list --company-id "$PAPERCLIP_COMPANY_ID" --json
+paperclip-cli routine create --company-id "$PAPERCLIP_COMPANY_ID" --title "Nightly triage" --assignee-agent-id <agent-id>
+paperclip-cli routine run <routine-id>
 
 # Issues
 paperclip-cli issue list --company-id "$PAPERCLIP_COMPANY_ID" --status todo,in_progress --json
+paperclip-cli issue list --company-id "$PAPERCLIP_COMPANY_ID" --parent-id <issue-id> --json
 paperclip-cli issue get <issue-id> --json
 paperclip-cli issue create \
   --company-id "$PAPERCLIP_COMPANY_ID" \
   --title "Investigate checkout conflict" \
   --priority high
-paperclip-cli issue update <issue-id> --status in_progress
+paperclip-cli issue update <issue-id> --status in_progress --label-id <label-id>
 paperclip-cli issue comment <issue-id> --body "Started investigation."
+paperclip-cli issue documents <issue-id> --json
+paperclip-cli issue document <issue-id> --key plan --json
+paperclip-cli issue attachments <issue-id> --json
+paperclip-cli issue archive <issue-id>
+paperclip-cli label list --company-id "$PAPERCLIP_COMPANY_ID" --json
 
 # Skills
 paperclip-cli skill list --company-id "$PAPERCLIP_COMPANY_ID" --json
 paperclip-cli skill get <skill-id> --json
+paperclip-cli skill file <skill-id> --path SKILL.md
+paperclip-cli skill write-file <skill-id> --path SKILL.md --content-file ./SKILL.md --yes
+paperclip-cli skill install-catalog --company-id "$PAPERCLIP_COMPANY_ID" --catalog-skill-id <catalog-id>
 
 # Approvals
 paperclip-cli approval list --company-id "$PAPERCLIP_COMPANY_ID" --status pending --json
 paperclip-cli approval get <approval-id> --json
+paperclip-cli approval create --company-id "$PAPERCLIP_COMPANY_ID" --type request_board_approval --payload '{"summary":"Ship v2"}'
 
 # Activity and dashboard
 paperclip-cli activity list --company-id "$PAPERCLIP_COMPANY_ID" --json
 paperclip-cli dashboard get --company-id "$PAPERCLIP_COMPANY_ID" --json
 
-# Plugins and issue runs
+# Plugins and runs
 paperclip-cli plugin list --json
+paperclip-cli plugin logs <plugin-id> --limit 50
+paperclip-cli plugin config get <plugin-id> --company-id "$PAPERCLIP_COMPANY_ID" --json
 paperclip-cli run list --issue-id <issue-id> --json
+paperclip-cli run routine <routine-id> --json
 ```
 
-Approval decisions require explicit `--yes` confirmation. Before creating or changing a resource, agents should read current state, perform the smallest mutation, and use `--verify` where supported to re-read the resource and verify the observed result.
+Approval decisions require explicit `--yes` confirmation, as do the other irreversible mutations (`agent terminate`, `agent keys revoke`, `plugin disable`, `plugin config set`, `skill write-file`, and every `api` mutation). Before creating or changing a resource, agents should read current state, perform the smallest mutation, and use `--verify` where supported to re-read the resource and verify the observed result.
+
+### Generic API passthrough
+
+Not every route needs a typed command. Reach the API directly instead of waiting for one:
+
+```sh
+# Inspect what the connected server documents
+paperclip-cli api describe /api/companies/:companyId/costs
+
+# Read any path
+paperclip-cli api get /api/companies/$PAPERCLIP_COMPANY_ID/inbox --query limit=20 --json
+
+# Mutate any path (mutations require --yes)
+paperclip-cli api post /api/agents/<agent-id>/wakeup --data '{"reason":"Nightly sweep"}' --yes
+paperclip-cli api patch /api/issues/<issue-id> --data-file ./patch.json --yes --verify
+```
+
+`api` accepts `/api/...`, `api/...`, or `companies/...` paths, rejects absolute URLs and `..`, reuses the configured context profile and bearer credential, and inherits the read retries, redaction, and `--json` behavior of the typed commands. Prefer a typed command when one exists: it validates GUID fields and required arguments before sending.
 
 ## CI usage
 
@@ -314,16 +357,14 @@ Do not print the environment, use shell tracing, or include API responses contai
 
 ## Server compatibility
 
-The CLI is independent from the Paperclip server source code, but it still depends on the server's public API contract.
+Verified against Paperclip `v2026.1005.0`; supported from `2026.831.0`. The CLI is independent from the Paperclip server source code, but it still depends on the server's public API contract.
 
-Each release will document:
+- `paperclip-cli health` compares the server's reported version against the tested window and warns on stderr when the server is older or newer. It never blocks a command.
+- `paperclip-cli api describe <pattern>` lists the operations the connected server documents, so gaps are visible before guessing at a route.
+- This CLI and upstream's `paperclipai` CLI share `~/.paperclip`, so profile keys, the context file version, and credential timestamps are preserved across both tools.
+- GUID-strict fields (`--agent-id`, `--project-id`, and similar) are validated locally, so a slug fails with the flag name instead of an opaque `400`.
 
-- minimum supported Paperclip server version
-- tested server versions
-- command-specific version requirements
-- API capabilities that are optional or unavailable
-
-If the server reports an incompatible version or a command returns an unsupported-route response, upgrade the CLI/server pair or consult the compatibility matrix. Do not work around a contract mismatch by importing server internals.
+If the server reports an untested version or a command returns an unsupported-route response, upgrade the CLI/server pair or consult the compatibility matrix. Do not work around a contract mismatch by importing server internals.
 
 ## Troubleshooting
 

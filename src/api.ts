@@ -57,22 +57,27 @@ export class PaperclipApiClient {
   }
 
   get<T>(path: string): Promise<T | null> {
-    return this.request<T>("GET", path);
+    return this.send<T>("GET", path);
   }
 
   post<T>(path: string, body?: unknown): Promise<T | null> {
-    return this.request<T>("POST", path, body);
+    return this.send<T>("POST", path, body);
   }
 
   patch<T>(path: string, body?: unknown): Promise<T | null> {
-    return this.request<T>("PATCH", path, body);
+    return this.send<T>("PATCH", path, body);
   }
 
   delete<T>(path: string): Promise<T | null> {
-    return this.request<T>("DELETE", path);
+    return this.send<T>("DELETE", path);
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T | null> {
+  /** Raw escape hatch used by `paperclip-cli api`; prefer the typed helpers. */
+  request<T>(method: string, path: string, body?: unknown): Promise<T | null> {
+    return this.send<T>(method, path, body);
+  }
+
+  private async send<T>(method: string, path: string, body?: unknown): Promise<T | null> {
     const url = buildUrl(this.apiBase, path);
     const headers = new Headers({
       accept: "application/json",

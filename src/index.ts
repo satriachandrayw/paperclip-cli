@@ -13,6 +13,7 @@ import {
   registerSkillCommands,
 } from "./commands.js";
 import { registerHarnessCommands } from "./scanner/index.js";
+import { registerApiPassthroughCommands } from "./passthrough.js";
 
 const program = new Command();
 
@@ -30,6 +31,7 @@ registerProjectGoalRoutinePluginCommands(program);
 registerSkillCommands(program);
 registerApprovalCommands(program);
 registerActivityAndDashboardCommands(program);
+registerApiPassthroughCommands(program);
 registerHealthCommand(program);
 registerHarnessCommands(program);
 

@@ -11,13 +11,23 @@ export function redactSecrets(value: unknown): unknown {
   return output;
 }
 
-export function printOutput(value: unknown, json = false): void {
-  const safe = redactSecrets(value);
-  if (json || typeof safe === "object") {
+export function printOutput(value: unknown, json = false, options?: { revealSecrets?: boolean }): void {
+  const safe = options?.revealSecrets ? value : redactSecrets(value);
+  if (json || (safe !== null && typeof safe === "object")) {
     console.log(JSON.stringify(safe, null, 2));
     return;
   }
   console.log(String(safe ?? ""));
+}
+
+/**
+ * Prints a response that intentionally carries a one-time credential (for example a
+ * freshly created agent API key). Disables redaction and warns on stderr so the value
+ * is never mistaken for a redacted placeholder.
+ */
+export function printRevealedSecret(value: unknown, json = false, warning?: string): void {
+  console.error(warning ?? "This response contains a credential that is shown once. Store it now; it cannot be read again.");
+  printOutput(value, json, { revealSecrets: true });
 }
 
 export function printRows(rows: unknown[], json: boolean): void {
