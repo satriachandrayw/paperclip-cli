@@ -10,6 +10,7 @@
  */
 
 import { readdir, readFile, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join, basename } from "node:path";
 
 // Types
@@ -127,7 +128,7 @@ export async function scanInstance(options: ScanOptions): Promise<InstanceScan> 
       const companyStat = await stat(companyPath);
       if (!companyStat.isDirectory()) continue;
 
-      const company = await scanCompany(companyPath, dir, { agentId, includeMemory, includeRunLogs, maxRunLogSample });
+      const company = await scanCompany(companyPath, dir, { agentId, instanceRoot, includeMemory, includeRunLogs, maxRunLogSample });
       companies.push(company);
     }
   } catch (err) {
@@ -183,7 +184,7 @@ async function scanConfig(instanceRoot: string): Promise<InstanceConfig> {
 async function scanCompany(
   companyPath: string,
   companyId: string,
-  options: { agentId?: string; includeMemory: boolean; includeRunLogs: boolean; maxRunLogSample: number }
+  options: { agentId?: string; instanceRoot?: string; includeMemory: boolean; includeRunLogs: boolean; maxRunLogSample: number }
 ): Promise<CompanyScan> {
   const agentsDir = join(companyPath, "agents");
   const agents: AgentScan[] = [];
@@ -232,7 +233,7 @@ async function scanCompany(
 async function scanAgent(
   agentPath: string,
   agentId: string,
-  options: { includeMemory: boolean; includeRunLogs: boolean; maxRunLogSample: number }
+  options: { instanceRoot?: string; includeMemory: boolean; includeRunLogs: boolean; maxRunLogSample: number }
 ): Promise<AgentScan> {
   // Scan instructions
   const instructionsPath = join(agentPath, "instructions");
@@ -247,7 +248,7 @@ async function scanAgent(
   const life = await scanLife(lifePath);
 
   // Scan run-logs (metadata only)
-  const runLogs = options.includeRunLogs ? await scanRunLogMetadata(agentId, options.maxRunLogSample) : [];
+  const runLogs = options.includeRunLogs ? await scanRunLogMetadata(agentId, options.maxRunLogSample, options.instanceRoot) : [];
 
   return {
     agentId,
@@ -395,11 +396,22 @@ async function scanLife(lifePath: string): Promise<LifeScan> {
   };
 }
 
-async function scanRunLogMetadata(agentId: string, maxSample: number): Promise<RunLogScan[]> {
-  // Run-logs are stored at: /srv/paperclip/home/instances/default/data/run-logs/{companyId}/{agentId}/
-  // We need to find the company ID from the agent ID
-  // For now, we'll scan all companies
-  const runLogsBase = "/srv/paperclip/home/instances/default/data/run-logs";
+/**
+ * Run logs live at `<instance root>/data/run-logs/<companyId>/<agentId>/`. Prefer the instance root
+ * the caller already scanned, fall back to the environment, and never assume one deployment
+ * layout, so the scan works on any install rather than only the authoring host.
+ */
+export function resolveRunLogsBase(instanceRoot?: string): string {
+  const explicit = process.env.PAPERCLIP_RUN_LOGS_DIR?.trim();
+  if (explicit) return explicit;
+  if (instanceRoot?.trim()) return join(instanceRoot.trim(), "data", "run-logs");
+  const home = process.env.PAPERCLIP_HOME?.trim() || join(homedir(), ".paperclip");
+  const instanceId = process.env.PAPERCLIP_INSTANCE_ID?.trim() || "default";
+  return join(home, "instances", instanceId, "data", "run-logs");
+}
+
+async function scanRunLogMetadata(agentId: string, maxSample: number, instanceRoot?: string): Promise<RunLogScan[]> {
+  const runLogsBase = resolveRunLogsBase(instanceRoot);
   const runLogs: RunLogScan[] = [];
 
   try {
