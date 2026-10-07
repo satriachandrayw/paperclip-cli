@@ -29,7 +29,7 @@ Those responsibilities remain with Paperclip server/runtime tooling or the agent
 The planned npm package is scoped to avoid colliding with the upstream `paperclipai` package:
 
 ```sh
-npm install --global @satriachandaryw/paperclip-cli
+npm install --global @satriachandrayw/paperclip-cli
 ```
 
 The primary executable is:
@@ -41,7 +41,7 @@ paperclip-cli --help
 During development, run from a checkout:
 
 ```sh
-git clone https://github.com/satriachandaryw/paperclip-cli.git
+git clone https://github.com/satriachandrayw/paperclip-cli.git
 cd paperclip-cli
 pnpm install
 pnpm build
