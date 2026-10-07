@@ -111,17 +111,18 @@ Both tools use `~/.paperclip/` with the same filenames:
 `context use`/`context set` rewrites the shared file as `version: 1` and drops upstream-only keys
 from every profile.
 
-Reproduced against a copy of this machine's live `~/.paperclip/context.json` (version 2,
-profile `intentlab` current):
+Reproduced against a copy of the live `~/.paperclip/context.json` (version 2, a non-default
+profile current). Deployment identifiers in the excerpt below are replaced with synthetic values of
+the same shape:
 
 ```
-$ node dist/index.js context use intentlab --context /tmp/ctx-test.json
+$ node dist/index.js context use prod --context /tmp/ctx-test.json
 --- before/after
 -   "version": 2,                          +   "version": 1,
 -       "persona": "board",                (dropped)
--       "tokenName": "hermes-board-ops-365", (dropped)
--       "tokenId": "3e1b931e-...",          (dropped)
--       "tokenCreatedAt": "2026-07-25 ...", (dropped)
+-       "tokenName": "board-ops-token",     (dropped)
+-       "tokenId": "3f1c9a44-5d2b-...",     (dropped)
+-       "tokenCreatedAt": "2026-01-05 ...", (dropped)
 ```
 
 Upstream only reads `apiBase`/`companyId`/`apiKeyEnvVarName` back, so the loss is invisible until
@@ -146,7 +147,7 @@ Reverse direction works. paperclip-cli only needs `token`, and `readAuthStore()`
 (`src/config.ts:137`) round-trips unknown keys, so it keeps upstream's timestamps intact. Verified
 end-to-end against a local fake server: `paperclip-cli health` with
 `PAPERCLIP_AUTH_STORE=<upstream-shaped store>` sent
-`GET /api/health auth=Bearer pcp_board_official_token` and returned 200.
+`GET /api/health auth=Bearer pcp_board_EXAMPLE_TOKEN` and returned 200.
 
 **Minimal fix:** write `createdAt`/`updatedAt` ISO strings in `setStoredToken()`, reusing
 `createdAt` when the entry already exists.
@@ -178,7 +179,9 @@ same API or converges on upstream's CLI.
 
 ## 4. Release-gate status (from `docs/compatibility.md`)
 
-- `paperclip-cli` is **not published**: `npm view @satriachandaryw/paperclip-cli` → 404.
+- `paperclip-cli` is **not published**: `npm view <package name>` → 404. The initial package name
+also used a scope that did not match the npm username (`@satriachandaryw` vs `satriachandrayw`),
+which fails at publish time; tracked separately.
 - No live canary result is recorded for any server version, including `v2026.1005.0`.
 - Unit tests pass locally (4 files / 18 tests, `pnpm test`) but they exercise a fake server only.
 - paperclip-cli has no server-version detection (`src/index.ts` sets `.version("0.1.0")` and
@@ -192,16 +195,16 @@ same API or converges on upstream's CLI.
 
 ```sh
 # endpoint surface vs the latest release tag
-cd /home/satria/paperclip && git rev-parse v2026.1005.0   # 467125fafb47a8520856504fecc48d6e32055db1
+cd "$PAPERCLIP_REPO" && git rev-parse v2026.1005.0   # 467125fafb47a8520856504fecc48d6e32055db1
 node /tmp/cmp.mjs                                          # 36/36 OK
 
 # defect A (context.json) — use a copy, never the live file
 cp ~/.paperclip/context.json /tmp/ctx-test.json
-node dist/index.js context use intentlab --context /tmp/ctx-test.json && diff ~/.paperclip/context.json /tmp/ctx-test.json
+node dist/index.js context use prod --context /tmp/ctx-test.json && diff ~/.paperclip/context.json /tmp/ctx-test.json
 
 # defect B (auth.json)
-cd /home/satria/paperclip/cli && ./node_modules/.bin/tsx /tmp/auth-probe.mts
+cd "$PAPERCLIP_REPO"/cli && ./node_modules/.bin/tsx /tmp/auth-probe.mts
 
 # CLI own test suite
-cd /home/satria/projects/paperclip-cli && pnpm test
+cd "$PAPERCLIP_CLI_REPO" && pnpm test
 ```
