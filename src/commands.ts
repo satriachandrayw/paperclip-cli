@@ -825,9 +825,9 @@ export function registerActivityAndDashboardCommands(program: Command): void {
 export function registerHealthCommand(program: Command): void {
   addCommonOptions(program.command("health").description("Check API reachability")).action((options: AnyOptions) => withErrors(async () => {
     const { api, json } = resolveClient(options);
-    const health = await api.get<{ version?: unknown }>("/api/health");
+    const health = await api.get<{ version?: unknown; commit?: unknown }>("/api/health");
     printOutput(health, json);
-    const assessment = assessServerVersion(health?.version);
+    const assessment = assessServerVersion(health?.version, health?.commit);
     if (assessment.message) console.error(`Compatibility: ${assessment.message}`);
   }));
 }

@@ -258,3 +258,25 @@ describe("server compatibility reporting", () => {
     expect(process.exitCode).toBeUndefined();
   });
 });
+
+describe("server compatibility by build commit", () => {
+  it("recognizes a tested build when the server reports no version", async () => {
+    const apiBase = await startServer();
+    // Shape returned by a self-hosted server on the tested release tag.
+    responder = () => ({ body: { status: "ok", commit: "467125fafb47a8520856504fecc48d6e32055db1" } });
+
+    await runCli(["health", "--api-base", apiBase]);
+
+    expect(stderr.join("\n")).not.toContain("Compatibility:");
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("reports an untested build when neither version nor commit is known", async () => {
+    const apiBase = await startServer();
+    responder = () => ({ body: { status: "ok", commit: "0123456789abcdef0123456789abcdef01234567" } });
+
+    await runCli(["health", "--api-base", apiBase]);
+
+    expect(stderr.join("\n")).toContain("not a tested build");
+  });
+});
