@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = process.cwd();
@@ -57,6 +58,15 @@ describe("publish safety", () => {
     }
 
     expect(violations).toEqual([]);
+  });
+
+  it("reports the package version", () => {
+    const entry = path.join(repoRoot, "dist", "index.js");
+    if (!fs.existsSync(entry)) return; // CI builds before testing; a bare checkout may not
+    const reported = execFileSync(process.execPath, [entry, "--version"], { encoding: "utf8" }).trim();
+    const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8")) as { version: string };
+    // `--version` said 0.1.0 on the 0.1.1 release because the string was hardcoded.
+    expect(reported).toBe(pkg.version);
   });
 
   it("declares the same owner for the package scope and the repository", () => {
