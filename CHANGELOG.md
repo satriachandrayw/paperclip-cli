@@ -2,7 +2,14 @@
 
 All notable changes to Paperclip CLI will be documented here.
 
-## [0.1.0] - Unreleased
+## [0.1.1] - Unreleased
+
+### Fixed
+
+- `health` reported "server did not report a version" for a self-hosted server running a release tag, which sends `commit` but no `version`. Tested build commits in `TESTED_SERVER_COMMITS` are now recognized, and an unknown commit is named in the warning.
+- The live canary now falls back to the credential the CLI stores for the target API base (so no key has to be pasted onto a command line) and pins `--api-base`, which a context profile could otherwise override.
+
+## [0.1.0] - 2026-10-07
 
 ### Added
 
@@ -28,4 +35,4 @@ All notable changes to Paperclip CLI will be documented here.
 
 ### Release status
 
-This version is not published yet. A real Paperclip deployment canary and package publication are release-gate items.
+Published to npm as `0.1.0` on 2026-10-07. The read-only canary passed against a self-hosted deployment running `v2026.1005.0` (commit `467125f`) the same day; see `docs/compatibility.md` for the recorded run and the supported window.

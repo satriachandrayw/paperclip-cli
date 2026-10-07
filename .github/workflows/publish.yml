@@ -1,0 +1,78 @@
+name: Publish
+
+# Tag-triggered release with registry provenance. Publishing uses npm trusted publishing
+# (OIDC), so no registry token is stored in this repository. One-time setup, before the first
+# CI release: npmjs.com -> the package -> Settings -> Trusted Publisher -> GitHub Actions, with
+# repository `satriachandrayw/paperclip-cli` and workflow `publish.yml`. Until that exists, the
+# first release has to be published locally with `npm publish`; afterwards tag a `v*` commit and
+# this workflow takes over.
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "package.json"
+      - "src/**"
+      - "integrations/**"
+      - "scripts/**"
+      - "README.md"
+      - "CHANGELOG.md"
+      - ".github/workflows/publish.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  pack-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # Covers the publish-safety gate over the packaged file set, including dist.
+      - run: pnpm test
+      # `npm pack` rather than `npm publish --dry-run`: the latter fails once the current version
+      # already exists on the registry, which would break every PR after a release.
+      - run: npm pack --dry-run
+      - run: test -x dist/index.js && node dist/index.js --help
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required for trusted publishing and provenance attestation
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      # Trusted publishing requires npm >= 11.5.1; Node 24 may ship older.
+      - run: npm install -g npm@latest
+      - run: pnpm install --frozen-lockfile
+      - name: Verify the tag matches package.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $pkg"
+            exit 1
+          fi
+      - run: pnpm build
+      - run: pnpm test
+      # prepublishOnly reruns clean+build+test; publishing is the only step that must not be
+      # skipped, so run it through npm rather than assembling the tarball by hand.
+      - run: npm publish --access public --provenance
