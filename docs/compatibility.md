@@ -6,12 +6,12 @@ This CLI uses the Paperclip HTTP API only. It does not import Paperclip server p
 
 | Server version | Status | Evidence |
 |---|---|---|
-| `v2026.1005.0` | Contract-verified | Every endpoint below resolves to a documented route at that tag (`server/src/routes/openapi.ts`, tuple-form registrations included), with matching request validators and response shapes. Read-only canary still pending. |
+| `v2026.1005.0` (commit `467125f`) | Contract-verified | Every endpoint below resolves to a documented route at that tag (`server/src/routes/openapi.ts`, tuple-form registrations included), with matching request validators and response shapes. Read-only canary still pending. |
 | `>= 2026.831.0`, `< 2026.1005.0` | Supported, untested | Route families are unchanged across those releases; no canary recorded. |
 | `< 2026.831.0` | Unsupported | `paperclip-cli health` prints a warning to stderr. |
 | `> 2026.1005.0` | Untested | `paperclip-cli health` prints a warning to stderr. The API is unversioned and upstream publishes no deprecation policy, so pin and re-verify. |
 
-`paperclip-cli health` compares the server's reported `version` against this window and warns; it never blocks a command.
+`paperclip-cli health` compares the server's reported `version` against this window and warns; it never blocks a command. A self-hosted server on a release tag reports `commit` but no `version`, so the CLI also recognizes the commits listed in `TESTED_SERVER_COMMITS` (`src/compat.ts`) and stays quiet for those builds.
 
 ## Shared state with the upstream `paperclipai` CLI
 

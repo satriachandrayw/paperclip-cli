@@ -5,6 +5,15 @@
  */
 export const TESTED_SERVER_VERSIONS = ["2026.1005.0"] as const;
 
+/**
+ * Some deployments report a build commit instead of a version, and a self-hosted server on a
+ * release tag reports no `version` field at all. Map the commits this CLI was verified against
+ * so those deployments are still recognized.
+ */
+export const TESTED_SERVER_COMMITS: Record<string, string> = {
+  "467125fafb47a8520856504fecc48d6e32055db1": "2026.1005.0",
+};
+
 export const MIN_SUPPORTED_SERVER_VERSION = "2026.831.0";
 
 export type ServerVersionStatus = "supported" | "untested-newer" | "older-than-supported" | "unknown";
@@ -13,6 +22,16 @@ export interface ServerVersionAssessment {
   status: ServerVersionStatus;
   reported: string | null;
   message?: string;
+}
+
+/** An abbreviated SHA still identifies the build, so match on a prefix of at least 7 characters. */
+export function matchTestedCommit(commit: unknown): string | null {
+  const value = typeof commit === "string" ? commit.trim().toLowerCase() : "";
+  if (value.length < 7) return null;
+  for (const [sha, version] of Object.entries(TESTED_SERVER_COMMITS)) {
+    if (sha.startsWith(value) || value.startsWith(sha)) return version;
+  }
+  return null;
 }
 
 /** Calendar versions are `YYYY.MMDD.P`; compare component-wise. */
@@ -31,10 +50,19 @@ function compare(left: number[], right: number[]): number {
   return 0;
 }
 
-export function assessServerVersion(reported: unknown): ServerVersionAssessment {
+export function assessServerVersion(reported: unknown, commit?: unknown): ServerVersionAssessment {
   const value = typeof reported === "string" ? reported.trim() : "";
+  const testedCommit = matchTestedCommit(commit);
+  const buildLabel = typeof commit === "string" && commit.trim() ? commit.trim().slice(0, 12) : null;
   if (!value) {
-    return { status: "unknown", reported: null, message: "Server did not report a version." };
+    if (testedCommit) return { status: "supported", reported: testedCommit };
+    return {
+      status: "unknown",
+      reported: null,
+      message: buildLabel
+        ? `Server did not report a version and commit ${buildLabel} is not a tested build. Compatibility is unverified.`
+        : "Server did not report a version. Compatibility is unverified.",
+    };
   }
   const parsed = parseVersion(value);
   const minimum = parseVersion(MIN_SUPPORTED_SERVER_VERSION)!;
