@@ -2,6 +2,12 @@
 
 All notable changes to Paperclip CLI will be documented here.
 
+## [0.1.2] - Unreleased
+
+### Fixed
+
+- `--version` reported `0.1.0` on every release after the first, because the version string was hardcoded in `src/index.ts`. It is now read from `package.json` at runtime, with a regression test that compares `dist/index.js --version` against the manifest.
+
 ## [0.1.1] - 2026-10-07
 
 ### Fixed
