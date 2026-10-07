@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { spawn } from "node:child_process";
 
 if (process.env.PAPERCLIP_CANARY !== "1") {
@@ -5,13 +8,39 @@ if (process.env.PAPERCLIP_CANARY !== "1") {
   process.exit(0);
 }
 
-for (const name of ["PAPERCLIP_API_URL", "PAPERCLIP_API_KEY"]) {
-  if (!process.env[name]) throw new Error(`${name} is required for the live canary`);
+if (!process.env.PAPERCLIP_API_URL) throw new Error("PAPERCLIP_API_URL is required for the live canary");
+
+/**
+ * Prefer an explicit PAPERCLIP_API_KEY. When it is absent, fall back to the credential the CLI
+ * already stores for this API base so a board key never has to be pasted onto a command line
+ * (and into shell history and process listings).
+ */
+function credentialSource() {
+  if (process.env.PAPERCLIP_API_KEY?.trim()) return "PAPERCLIP_API_KEY";
+  const storePath = path.resolve(
+    (process.env.PAPERCLIP_AUTH_STORE || "~/.paperclip/auth.json").replace(/^~(?=\/)/, os.homedir()),
+  );
+  try {
+    const store = JSON.parse(fs.readFileSync(storePath, "utf8"));
+    const apiBase = String(process.env.PAPERCLIP_API_URL).replace(/\/+$/, "");
+    const key = store?.credentials?.[apiBase];
+    if (key?.token) return `${storePath} (${apiBase})`;
+  } catch {
+    // Fall through to the error below.
+  }
+  throw new Error(
+    `No credential found. Set PAPERCLIP_API_KEY, or run \`paperclip-cli auth login --api-base ${process.env.PAPERCLIP_API_URL}\` first.`,
+  );
 }
+
+const apiBase = String(process.env.PAPERCLIP_API_URL).replace(/\/+$/, "");
+const credential = credentialSource();
 
 function run(args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["dist/index.js", ...args], {
+    // Pin --api-base on every call: a context profile would otherwise take precedence over
+    // PAPERCLIP_API_URL and the canary could silently check a different server than requested.
+    const child = spawn(process.execPath, ["dist/index.js", ...args, "--api-base", apiBase], {
       cwd: process.cwd(),
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -48,3 +77,5 @@ if (process.env.PAPERCLIP_COMPANY_ID) {
 await check("openapi describe", ["api", "describe", "/api/health"]);
 
 console.log("live canary passed (read-only checks)");
+console.log(`server: ${apiBase}`);
+console.log(`credential: ${credential}`);

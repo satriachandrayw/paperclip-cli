@@ -6,7 +6,7 @@ This CLI uses the Paperclip HTTP API only. It does not import Paperclip server p
 
 | Server version | Status | Evidence |
 |---|---|---|
-| `v2026.1005.0` (commit `467125f`) | Contract-verified | Every endpoint below resolves to a documented route at that tag (`server/src/routes/openapi.ts`, tuple-form registrations included), with matching request validators and response shapes. Read-only canary still pending. |
+| `v2026.1005.0` (commit `467125f`) | Contract-verified and canary-verified | Every endpoint below resolves to a documented route at that tag (`server/src/routes/openapi.ts`, tuple-form registrations included), with matching request validators and response shapes. Read-only canary passed on 2026-10-07 against a deployment on commit `467125f` (health, authentication, company list, agent list, issue list, `api describe`). |
 | `>= 2026.831.0`, `< 2026.1005.0` | Supported, untested | Route families are unchanged across those releases; no canary recorded. |
 | `< 2026.831.0` | Unsupported | `paperclip-cli health` prints a warning to stderr. |
 | `> 2026.1005.0` | Untested | `paperclip-cli health` prints a warning to stderr. The API is unversioned and upstream publishes no deprecation policy, so pin and re-verify. |
@@ -74,16 +74,22 @@ These route families belong to the server runtime, browser UI, or agent runtime 
 
 ## Release gate
 
-Before publishing a release, run the read-only canary against each supported server version from a protected environment:
+Before publishing a release, run the read-only canary against each supported server version from a protected environment. `PAPERCLIP_API_KEY` is optional: when it is absent the canary falls back to the credential the CLI already stores for that API base, so a board key never has to be pasted onto a command line. The canary pins `--api-base` on every call, because a context profile would otherwise take precedence over `PAPERCLIP_API_URL` and the run could check a different server than intended.
 
 ```sh
 PAPERCLIP_CANARY=1 \
 PAPERCLIP_API_URL="https://paperclip.example.com" \
-PAPERCLIP_API_KEY="<injected-secret>" \
 PAPERCLIP_COMPANY_ID="<company-id>" \
+PAPERCLIP_API_KEY="<optional; injected-secret>" \
 pnpm run canary:live
 ```
 
 The canary never creates, updates, approves, rejects, comments, or installs anything. It checks health, authentication, company visibility, and—when a company ID is supplied—agent and issue reads, plus `api describe` against the server's OpenAPI document.
 
-A release is not considered live-compatible until the canary output is recorded in the release checklist without copying credentials or private identifiers into the repository. Apply the same rule to the new mutation commands: verify each one against a disposable company before advertising it.
+Recorded runs (hostnames and company identifiers deliberately omitted):
+
+| Date | Server | Version/commit | Result |
+|---|---|---|---|
+| 2026-10-07 | private self-hosted deployment | `v2026.1005.0` / `467125f` | passed: health, authentication, company list, agent list, issue list, `api describe` |
+
+A release is not considered live-compatible until the canary output is recorded in the release checklist without copying credentials or private identifiers into the repository. Apply the same rule to the mutation commands: verify each one against a disposable company before advertising it.
