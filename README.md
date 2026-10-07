@@ -374,7 +374,7 @@ The repository provides a portable operator skill at:
 integrations/skills/paperclip-cli-operator/SKILL.md
 ```
 
-The skill is generic and contains no deployment-specific IDs, URLs, secrets, personal paths, or PasPoto/Hermes policy. Deployment-specific board authority rules belong in the consuming agent environment.
+The skill is generic and contains no deployment-specific IDs, URLs, secrets, or personal paths. Deployment-specific board authority and operating rules belong in the consuming agent environment.
 
 ## Development
 

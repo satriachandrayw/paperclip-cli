@@ -145,6 +145,15 @@ async function printMutation(
 }
 
 function openBrowser(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  // Only hand http(s) to the OS handler. The approval URL comes from the server, so an arbitrary
+  // scheme here would let a misconfigured or compromised server launch a local protocol handler.
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
   try {
     if (process.platform === "darwin") {
       const child = spawn("open", [url], { detached: true, stdio: "ignore" });
