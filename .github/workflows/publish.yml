@@ -73,6 +73,20 @@ jobs:
           fi
       - run: pnpm build
       - run: pnpm test
+      # A version that is already on the registry cannot be replaced, and a local publish followed by
+      # a tag push must not produce a failed release run. Skip instead of failing.
+      - name: Check whether this version is already published
+        id: registry
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "$name@$version is already on the registry; nothing to publish"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
       # prepublishOnly reruns clean+build+test; publishing is the only step that must not be
       # skipped, so run it through npm rather than assembling the tarball by hand.
       - run: npm publish --access public --provenance
+        if: steps.registry.outputs.published == 'false'
