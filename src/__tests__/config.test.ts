@@ -93,8 +93,8 @@ describe("configuration and credential storage", () => {
           apiKeyEnvVarName: "PAPERCLIP_API_KEY",
           persona: "board",
           tokenName: "ops-token",
-          tokenId: "3e1b931e-798a-417c-87dc-72b367cc34c5",
-          tokenCreatedAt: "2026-07-25 08:21:36.656555+00",
+          tokenId: "3f1c9a44-5d2b-4e77-9a10-6c8b2d4f7e31",
+          tokenCreatedAt: "2026-01-05 00:00:00.000000+00",
           futureKey: { nested: true },
         },
         intentlab: { persona: "board" },
@@ -112,8 +112,8 @@ describe("configuration and credential storage", () => {
       apiKeyEnvVarName: "PAPERCLIP_API_KEY",
       persona: "board",
       tokenName: "ops-token",
-      tokenId: "3e1b931e-798a-417c-87dc-72b367cc34c5",
-      tokenCreatedAt: "2026-07-25 08:21:36.656555+00",
+      tokenId: "3f1c9a44-5d2b-4e77-9a10-6c8b2d4f7e31",
+      tokenCreatedAt: "2026-01-05 00:00:00.000000+00",
       futureKey: { nested: true },
     });
     expect(written.profiles.intentlab.persona).toBe("board");
