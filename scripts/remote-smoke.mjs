@@ -56,10 +56,24 @@ const created = await run([
 assert.equal(created.code, 0, created.stderr);
 assert.deepEqual(JSON.parse(created.stdout), { id: "issue-1", identifier: "PC-1", title: "Test issue", status: "todo" });
 
+const passthrough = await run([
+  "api", "get", "/api/companies", "--api-base", apiBase, "--api-key", "test-token", "--json",
+]);
+assert.equal(passthrough.code, 0, passthrough.stderr);
+assert.deepEqual(JSON.parse(passthrough.stdout), [{ id: "company-1", name: "Example Company" }]);
+
+const refused = await run([
+  "api", "post", "/api/companies", "--api-base", apiBase, "--api-key", "test-token", "--json",
+]);
+assert.equal(refused.code, 1, "passthrough mutations must require --yes");
+assert.match(refused.stderr, /without --yes/);
+assert.equal(requests.at(-1).method, "GET", "refused mutation must not reach the server");
+
 assert.equal(requests[0].auth, "Bearer test-token");
 assert.equal(requests[1].auth, "Bearer test-token");
 assert.deepEqual(JSON.parse(requests[1].body), { title: "Test issue" });
 assert.equal(requests[2].url, "/api/issues/issue-1");
+assert.equal(requests[3].url, "/api/companies");
 
 await new Promise((resolve) => server.close(resolve));
 console.log("remote CLI smoke passed");

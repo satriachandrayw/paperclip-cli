@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import fs from "node:fs";
 import { spawn } from "node:child_process";
 import {
   defaultAuthStorePath,
@@ -14,9 +15,10 @@ import {
   type ClientContextProfile,
 } from "./config.js";
 import { ApiRequestError, PaperclipApiClient } from "./api.js";
-import { printOutput, printRows } from "./output.js";
+import { assessServerVersion } from "./compat.js";
+import { printOutput, printRevealedSecret, printRows } from "./output.js";
 
-type CommonOptions = {
+export type CommonOptions = {
   apiBase?: string;
   apiKey?: string;
   companyId?: string;
@@ -25,7 +27,7 @@ type CommonOptions = {
   json?: boolean;
 };
 
-type AnyOptions = CommonOptions & Record<string, unknown>;
+export type AnyOptions = CommonOptions & Record<string, unknown>;
 
 type ClientContext = {
   api: PaperclipApiClient;
@@ -71,7 +73,7 @@ function resolveApiKey(options: CommonOptions, apiBase: string): string | undefi
   return options.apiKey?.trim() || profileKey || process.env.PAPERCLIP_API_KEY?.trim() || getStoredToken(apiBase);
 }
 
-function resolveClient(options: CommonOptions, requireCompany = false): ClientContext {
+export function resolveClient(options: CommonOptions, requireCompany = false): ClientContext {
   const apiBase = resolveApiBase(options);
   return {
     api: new PaperclipApiClient({ apiBase, apiKey: resolveApiKey(options, apiBase) }),
@@ -80,7 +82,7 @@ function resolveClient(options: CommonOptions, requireCompany = false): ClientCo
   };
 }
 
-async function withErrors(action: () => Promise<void>): Promise<void> {
+export async function withErrors(action: () => Promise<void>): Promise<void> {
   try {
     await action();
   } catch (error) {
@@ -94,7 +96,33 @@ async function withErrors(action: () => Promise<void>): Promise<void> {
   }
 }
 
-function idPath(value: string): string {
+const GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The server validates these fields with `z.string().guid()`, so a URL key or slug
+ * fails with an opaque 400. Fail early with the flag name instead.
+ */
+function requireGuid(value: unknown, flag: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const text = String(value).trim();
+  if (!text) return undefined;
+  if (!GUID_PATTERN.test(text)) {
+    throw new Error(`${flag} must be a UUID. Pass the record's id field, not its URL key or slug (received "${text}").`);
+  }
+  return text;
+}
+
+function guidFields(record: Record<string, unknown>, flags: Record<string, string>): Record<string, unknown> {
+  const output: Record<string, unknown> = { ...record };
+  for (const [key, flag] of Object.entries(flags)) {
+    const value = requireGuid(output[key], flag);
+    if (value === undefined) delete output[key];
+    else output[key] = value;
+  }
+  return output;
+}
+
+export function idPath(value: string): string {
   return encodeURIComponent(value.trim());
 }
 
@@ -118,6 +146,10 @@ function parseCsv(value: string | undefined): string[] | undefined {
   return values.length ? values : undefined;
 }
 
+function collect(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
 function resourceId(value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>;
@@ -127,7 +159,7 @@ function resourceId(value: unknown): string | undefined {
   return undefined;
 }
 
-async function printMutation(
+export async function printMutation(
   api: PaperclipApiClient,
   result: unknown,
   json: boolean,
@@ -180,7 +212,7 @@ async function login(options: AnyOptions): Promise<void> {
     command: "paperclip-cli auth login",
     clientName: "paperclip-cli",
     requestedAccess: options.instanceAdmin ? "instance_admin_required" : "board",
-    requestedCompanyId: options.companyId ?? process.env.PAPERCLIP_COMPANY_ID ?? null,
+    requestedCompanyId: requireGuid(options.companyId, "--company-id") ?? requireGuid(process.env.PAPERCLIP_COMPANY_ID, "PAPERCLIP_COMPANY_ID") ?? null,
   });
   if (!challenge) throw new Error("Paperclip returned an empty authentication challenge.");
   const approvalUrl = challenge.approvalUrl || `${apiBase}${challenge.approvalPath}`;
@@ -265,7 +297,7 @@ export function registerAuthCommands(program: Command): void {
   }));
 }
 
-function registerSimpleResource(program: Command, resource: string, listPath: (companyId: string) => string, getPath: (id: string) => string): void {
+function registerSimpleResource(program: Command, resource: string, listPath: (companyId: string) => string, getPath: (id: string) => string): Command {
   const command = program.command(resource).description(`${resource} operations`);
   addCommonOptions(command.command("list").description(`List ${resource}s`), true).action((options: AnyOptions) => withErrors(async () => {
     const { api, companyId, json } = resolveClient(options, true);
@@ -275,6 +307,7 @@ function registerSimpleResource(program: Command, resource: string, listPath: (c
     const { api, json } = resolveClient(options);
     printOutput(await api.get(getPath(idPath(id))), json);
   }));
+  return command;
 }
 
 export function registerCompanyCommands(program: Command): void {
@@ -287,16 +320,229 @@ export function registerCompanyCommands(program: Command): void {
     const { api, json } = resolveClient(options);
     printOutput(await api.get(`/api/companies/${idPath(id)}`), json);
   }));
+
+  const label = program.command("label").description("Company issue labels");
+  addCommonOptions(label.command("list").description("List company issue labels"), true).action((options: AnyOptions) => withErrors(async () => {
+    const { api, companyId, json } = resolveClient(options, true);
+    printRows((await api.get<unknown[]>(`/api/companies/${idPath(companyId!)}/labels`)) ?? [], json);
+  }));
 }
 
 export function registerAgentCommands(program: Command): void {
-  registerSimpleResource(program, "agent", (companyId) => `/api/companies/${idPath(companyId)}/agents`, (id) => `/api/agents/${id}`);
+  const agent = registerSimpleResource(program, "agent", (companyId) => `/api/companies/${idPath(companyId)}/agents`, (id) => `/api/agents/${id}`);
+
+  for (const [verb, description] of [
+    ["pause", "Pause an agent and cancel its active heartbeats"],
+    ["resume", "Resume a paused agent"],
+    ["clear-error", "Clear a stuck agent error state"],
+    ["terminate", "Terminate an agent (irreversible)"],
+  ] as const) {
+    const command = agent
+      .command(`${verb} <id>`)
+      .description(description)
+      .option("--verify", "Re-read the agent");
+    if (verb === "terminate") command.option("--yes", "Confirm the termination");
+    addCommonOptions(command).action((id: string, options: AnyOptions) => withErrors(async () => {
+      if (verb === "terminate" && !options.yes) throw new Error("Refusing to terminate an agent without --yes.");
+      const { api, json } = resolveClient(options);
+      const result = await api.post(`/api/agents/${idPath(id)}/${verb}`, {});
+      await printMutation(api, result, json, Boolean(options.verify), "/api/agents/:id");
+    }));
+  }
+
+  addCommonOptions(
+    agent.command("wakeup <id>").description("Wake an agent on demand")
+      .option("--reason <text>", "Reason recorded on the wakeup")
+      .option("--source <source>", "timer | assignment | on_demand | automation", "on_demand")
+      .option("--force-fresh-session", "Start a fresh session instead of resuming")
+      .option("--verify", "Re-read the agent"),
+  ).action((id: string, options: AnyOptions) => withErrors(async () => {
+    const { api, json } = resolveClient(options);
+    const result = await api.post(`/api/agents/${idPath(id)}/wakeup`, omitUndefined({
+      reason: options.reason,
+      source: options.source,
+      forceFreshSession: options.forceFreshSession ? true : undefined,
+    }));
+    await printMutation(api, result, json, Boolean(options.verify), "/api/agents/:id");
+  }));
+
+  const keys = agent.command("keys").description("Agent API keys");
+  addCommonOptions(keys.command("list <id>").description("List an agent's API keys")).action((id: string, options: AnyOptions) => withErrors(async () => {
+    const { api, json } = resolveClient(options);
+    printRows((await api.get<unknown[]>(`/api/agents/${idPath(id)}/keys`)) ?? [], json);
+  }));
+  addCommonOptions(
+    keys.command("create <id>").description("Create an agent API key; the token is shown once")
+      .option("--name <name>", "Key name", "default")
+      .option("--scope-json <json>", "Raw scope object, for example '{\"kind\":\"standard\"}'"),
+  ).action((id: string, options: AnyOptions) => withErrors(async () => {
+    const { api, json } = resolveClient(options);
+    const scope = typeof options.scopeJson === "string" ? parseJsonObject(options.scopeJson, "--scope-json") : undefined;
+    const result = await api.post(`/api/agents/${idPath(id)}/keys`, omitUndefined({ name: options.name, scope }));
+    printRevealedSecret(result, json, "The agent API key below is shown once. Store it now; it cannot be read again.");
+  }));
+  addCommonOptions(
+    keys.command("revoke <id> <keyId>").description("Revoke an agent API key").option("--yes", "Confirm the revocation"),
+  ).action((id: string, keyId: string, options: AnyOptions) => withErrors(async () => {
+    if (!options.yes) throw new Error("Refusing to revoke a key without --yes.");
+    const { api, json } = resolveClient(options);
+    printOutput(await api.delete(`/api/agents/${idPath(id)}/keys/${idPath(keyId)}`), json);
+  }));
 }
 
 export function registerProjectGoalRoutinePluginCommands(program: Command): void {
-  registerSimpleResource(program, "project", (companyId) => `/api/companies/${idPath(companyId)}/projects`, (id) => `/api/projects/${id}`);
-  registerSimpleResource(program, "goal", (companyId) => `/api/companies/${idPath(companyId)}/goals`, (id) => `/api/goals/${id}`);
-  registerSimpleResource(program, "routine", (companyId) => `/api/companies/${idPath(companyId)}/routines`, (id) => `/api/routines/${id}`);
+  const project = registerSimpleResource(program, "project", (companyId) => `/api/companies/${idPath(companyId)}/projects`, (id) => `/api/projects/${id}`);
+  addCommonOptions(
+    project.command("create").description("Create a project")
+      .requiredOption("--name <name>")
+      .option("--description <text>")
+      .option("--status <status>", "backlog | planned | in_progress | completed | cancelled")
+      .option("--goal-id <id>", "Goal id; repeatable", collect, [] as string[])
+      .option("--lead-agent-id <id>")
+      .option("--target-date <date>")
+      .option("--verify", "Re-read the created project"),
+    true,
+  ).action((options: AnyOptions) => withErrors(async () => {
+    const { api, companyId, json } = resolveClient(options, true);
+    const goalIds = (options.goalId as string[]).map((value) => requireGuid(value, "--goal-id"));
+    const created = await api.post(`/api/companies/${idPath(companyId!)}/projects`, guidFields(omitUndefined({
+      name: options.name,
+      description: options.description,
+      status: options.status,
+      goalIds: goalIds.length ? goalIds : undefined,
+      leadAgentId: options.leadAgentId,
+      targetDate: options.targetDate,
+    }), { leadAgentId: "--lead-agent-id" }));
+    await printMutation(api, created, json, Boolean(options.verify), "/api/projects/:id");
+  }));
+  addCommonOptions(
+    project.command("update <id>").description("Update a project")
+      .option("--name <name>")
+      .option("--description <text>")
+      .option("--status <status>")
+      .option("--lead-agent-id <id>")
+      .option("--target-date <date>")
+      .option("--archive")
+      .option("--verify", "Re-read the updated project"),
+  ).action((id: string, options: AnyOptions) => withErrors(async () => {
+    const { api, json } = resolveClient(options);
+    const updated = await api.patch(`/api/projects/${idPath(id)}`, guidFields(omitUndefined({
+      name: options.name,
+      description: options.description,
+      status: options.status,
+      leadAgentId: options.leadAgentId,
+      targetDate: options.targetDate,
+      archivedAt: options.archive ? new Date().toISOString() : undefined,
+    }), { leadAgentId: "--lead-agent-id" }));
+    await printMutation(api, updated, json, Boolean(options.verify), `/api/projects/${idPath(id)}`);
+  }));
+
+  const goal = registerSimpleResource(program, "goal", (companyId) => `/api/companies/${idPath(companyId)}/goals`, (id) => `/api/goals/${id}`);
+  addCommonOptions(
+    goal.command("create").description("Create a goal")
+      .requiredOption("--title <title>")
+      .option("--description <text>")
+      .option("--level <level>", "company | team | agent | task")
+      .option("--status <status>", "planned | active | achieved | cancelled")
+      .option("--parent-id <id>")
+      .option("--owner-agent-id <id>")
+      .option("--verify", "Re-read the created goal"),
+    true,
+  ).action((options: AnyOptions) => withErrors(async () => {
+    const { api, companyId, json } = resolveClient(options, true);
+    const created = await api.post(`/api/companies/${idPath(companyId!)}/goals`, guidFields(omitUndefined({
+      title: options.title,
+      description: options.description,
+      level: options.level,
+      status: options.status,
+      parentId: options.parentId,
+      ownerAgentId: options.ownerAgentId,
+    }), { parentId: "--parent-id", ownerAgentId: "--owner-agent-id" }));
+    await printMutation(api, created, json, Boolean(options.verify), "/api/goals/:id");
+  }));
+  addCommonOptions(
+    goal.command("update <id>").description("Update a goal")
+      .option("--title <title>")
+      .option("--description <text>")
+      .option("--level <level>")
+      .option("--status <status>")
+      .option("--owner-agent-id <id>")
+      .option("--verify", "Re-read the updated goal"),
+  ).action((id: string, options: AnyOptions) => withErrors(async () => {
+    const { api, json } = resolveClient(options);
+    const updated = await api.patch(`/api/goals/${idPath(id)}`, guidFields(omitUndefined({
+      title: options.title,
+      description: options.description,
+      level: options.level,
+      status: options.status,
+      ownerAgentId: options.ownerAgentId,
+    }), { ownerAgentId: "--owner-agent-id" }));
+    await printMutation(api, updated, json, Boolean(options.verify), `/api/goals/${idPath(id)}`);
+  }));
+
+  const routine = registerSimpleResource(program, "routine", (companyId) => `/api/companies/${idPath(companyId)}/routines`, (id) => `/api/routines/${id}`);
+  addCommonOptions(
+    routine.command("create").description("Create a routine")
+      .requiredOption("--title <title>")
+      .option("--description <text>")
+      .option("--project-id <id>")
+      .option("--goal-id <id>")
+      .option("--parent-issue-id <id>")
+      .option("--assignee-agent-id <id>")
+      .option("--priority <priority>", "critical | high | medium | low")
+      .option("--status <status>", "active | paused | archived")
+      .option("--verify", "Re-read the created routine"),
+    true,
+  ).action((options: AnyOptions) => withErrors(async () => {
+    const { api, companyId, json } = resolveClient(options, true);
+    const created = await api.post(`/api/companies/${idPath(companyId!)}/routines`, guidFields(omitUndefined({
+      title: options.title,
+      description: options.description,
+      projectId: options.projectId,
+      goalId: options.goalId,
+      parentIssueId: options.parentIssueId,
+      assigneeAgentId: options.assigneeAgentId,
+      priority: options.priority,
+      status: options.status,
+    }), { projectId: "--project-id", goalId: "--goal-id", parentIssueId: "--parent-issue-id", assigneeAgentId: "--assignee-agent-id" }));
+    await printMutation(api, created, json, Boolean(options.verify), "/api/routines/:id");
+  }));
+  addCommonOptions(
+    routine.command("update <id>").description("Update a routine")
+      .option("--title <title>")
+      .option("--description <text>")
+      .option("--assignee-agent-id <id>")
+      .option("--priority <priority>")
+      .option("--status <status>")
+      .option("--verify", "Re-read the updated routine"),
+  ).action((id: string, options: AnyOptions) => withErrors(async () => {
+    const { api, json } = resolveClient(options);
+    const updated = await api.patch(`/api/routines/${idPath(id)}`, guidFields(omitUndefined({
+      title: options.title,
+      description: options.description,
+      assigneeAgentId: options.assigneeAgentId,
+      priority: options.priority,
+      status: options.status,
+    }), { assigneeAgentId: "--assignee-agent-id" }));
+    await printMutation(api, updated, json, Boolean(options.verify), `/api/routines/${idPath(id)}`);
+  }));
+  addCommonOptions(
+    routine.command("run <id>").description("Trigger a routine run now")
+      .option("--trigger-id <id>", "Trigger id to attribute the run to")
+      .option("--payload <json>", "Trigger payload as JSON")
+      .option("--idempotency-key <key>")
+      .option("--verify", "Re-read the routine"),
+  ).action((id: string, options: AnyOptions) => withErrors(async () => {
+    const { api, json } = resolveClient(options);
+    const payload = typeof options.payload === "string" ? parseJsonObject(options.payload, "--payload") : undefined;
+    const result = await api.post(`/api/routines/${idPath(id)}/run`, guidFields(omitUndefined({
+      triggerId: options.triggerId,
+      payload,
+      idempotencyKey: options.idempotencyKey,
+      source: "manual",
+    }), { triggerId: "--trigger-id" }));
+    await printMutation(api, result, json, Boolean(options.verify), `/api/routines/${idPath(id)}`);
+  }));
 
   const plugin = program.command("plugin").description("Remote plugin operations");
   addCommonOptions(plugin.command("list").description("List installed plugins")).action((options: AnyOptions) => withErrors(async () => {
@@ -307,11 +553,54 @@ export function registerProjectGoalRoutinePluginCommands(program: Command): void
     const { api, json } = resolveClient(options);
     printOutput(await api.get(`/api/plugins/${idPath(id)}`), json);
   }));
+  for (const action of ["enable", "disable"] as const) {
+    const command = plugin.command(`${action} <id>`).description(`${action} an installed plugin`);
+    if (action === "disable") command.option("--yes", "Confirm disabling the plugin");
+    addCommonOptions(command).action((id: string, options: AnyOptions) => withErrors(async () => {
+      if (action === "disable" && !options.yes) throw new Error("Refusing to disable a plugin without --yes.");
+      const { api, json } = resolveClient(options);
+      printOutput(await api.post(`/api/plugins/${idPath(id)}/${action}`, {}), json);
+    }));
+  }
+  const config = plugin.command("config").description("Plugin instance configuration");
+  addCommonOptions(config.command("get <id>").description("Read plugin config for a company"), true).action((id: string, options: AnyOptions) => withErrors(async () => {
+    const { api, companyId, json } = resolveClient(options, true);
+    printOutput(await api.get(`/api/plugins/${idPath(id)}/config?companyId=${encodeURIComponent(companyId!)}`), json);
+  }));
+  addCommonOptions(
+    config.command("set <id>").description("Replace plugin config for a company")
+      .requiredOption("--config-json <json>", "Configuration object as JSON")
+      .option("--yes", "Confirm the configuration change"),
+    true,
+  ).action((id: string, options: AnyOptions) => withErrors(async () => {
+    if (!options.yes) throw new Error("Refusing to change plugin config without --yes.");
+    const { api, companyId, json } = resolveClient(options, true);
+    const configJson = parseJsonObject(String(options.configJson), "--config-json");
+    printOutput(await api.post(`/api/plugins/${idPath(id)}/config`, { companyId: companyId!, configJson }), json);
+  }));
+  addCommonOptions(
+    plugin.command("logs <id>").description("Read plugin logs")
+      .option("--limit <count>", "Max rows (1-500)", "25")
+      .option("--level <level>", "Log level filter")
+      .option("--since <timestamp>", "Only rows at or after this timestamp"),
+  ).action((id: string, options: AnyOptions) => withErrors(async () => {
+    const { api, json } = resolveClient(options);
+    const query = new URLSearchParams({ limit: String(options.limit) });
+    for (const key of ["level", "since"] as const) {
+      const value = options[key];
+      if (typeof value === "string" && value.trim()) query.set(key, value);
+    }
+    printRows((await api.get<unknown[]>(`/api/plugins/${idPath(id)}/logs?${query}`)) ?? [], json);
+  }));
 
   const run = program.command("run").description("Remote run operations");
   addCommonOptions(run.command("list").description("List runs for an issue").requiredOption("--issue-id <id>")).action((options: AnyOptions) => withErrors(async () => {
     const { api, json } = resolveClient(options);
     printRows((await api.get<unknown[]>(`/api/issues/${idPath(String(options.issueId))}/runs`)) ?? [], json);
+  }));
+  addCommonOptions(run.command("routine <routineId>").description("List runs for a routine")).action((routineId: string, options: AnyOptions) => withErrors(async () => {
+    const { api, json } = resolveClient(options);
+    printRows((await api.get<unknown[]>(`/api/routines/${idPath(routineId)}/runs`)) ?? [], json);
   }));
 }
 
@@ -329,14 +618,62 @@ export function registerSkillCommands(program: Command): void {
     const { api, companyId, json } = resolveClient(options, true);
     printOutput(await api.get(`/api/companies/${idPath(companyId!)}/skills/${idPath(id)}/files?path=${encodeURIComponent(String(options.path))}`), json);
   }));
+  addCommonOptions(
+    skill.command("write-file <id>").description("Create or replace a skill file")
+      .requiredOption("--path <path>", "Relative file path")
+      .option("--content <text>", "File content")
+      .option("--content-file <path>", "Read file content from a local file")
+      .option("--executable", "Mark the file executable")
+      .option("--yes", "Confirm writing production skill content"),
+    true,
+  ).action((id: string, options: AnyOptions) => withErrors(async () => {
+    if (!options.yes) throw new Error("Refusing to write skill content without --yes.");
+    const { api, companyId, json } = resolveClient(options, true);
+    const content = readContentOption(options.content, options.contentFile);
+    printOutput(await api.patch(`/api/companies/${idPath(companyId!)}/skills/${idPath(id)}/files`, {
+      path: String(options.path),
+      content,
+      executable: options.executable ? true : undefined,
+    }), json);
+  }));
+  addCommonOptions(
+    skill.command("import").description("Import a skill from a source URL or path").requiredOption("--source <source>"),
+    true,
+  ).action((options: AnyOptions) => withErrors(async () => {
+    const { api, companyId, json } = resolveClient(options, true);
+    printOutput(await api.post(`/api/companies/${idPath(companyId!)}/skills/import`, { source: String(options.source) }), json);
+  }));
+  addCommonOptions(
+    skill.command("install-catalog").description("Install a skill from the catalog")
+      .requiredOption("--catalog-skill-id <id>")
+      .option("--slug <slug>")
+      .option("--force", "Reinstall over an existing skill"),
+    true,
+  ).action((options: AnyOptions) => withErrors(async () => {
+    const { api, companyId, json } = resolveClient(options, true);
+    printOutput(await api.post(`/api/companies/${idPath(companyId!)}/skills/install-catalog`, omitUndefined({
+      catalogSkillId: options.catalogSkillId,
+      slug: options.slug,
+      force: options.force ? true : undefined,
+    })), json);
+  }));
+}
+
+function readContentOption(content: unknown, contentFile: unknown): string {
+  const inline = typeof content === "string" ? content : "";
+  const file = typeof contentFile === "string" ? contentFile.trim() : "";
+  if (file && inline) throw new Error("Pass either --content or --content-file, not both.");
+  if (file) return fs.readFileSync(file, "utf8");
+  if (inline) return inline;
+  throw new Error("Pass --content or --content-file.");
 }
 
 export function registerIssueCommands(program: Command): void {
   const issue = program.command("issue").description("Issue operations");
-  addCommonOptions(issue.command("list").description("List company issues").option("--status <csv>").option("--project-id <id>").option("--assignee-agent-id <id>").option("--match <text>"), true).action((options: AnyOptions) => withErrors(async () => {
+  addCommonOptions(issue.command("list").description("List company issues").option("--status <csv>").option("--project-id <id>").option("--assignee-agent-id <id>").option("--parent-id <id>").option("--match <text>"), true).action((options: AnyOptions) => withErrors(async () => {
     const { api, companyId, json } = resolveClient(options, true);
     const query = new URLSearchParams();
-    for (const key of ["status", "projectId", "assigneeAgentId"] as const) {
+    for (const key of ["status", "projectId", "assigneeAgentId", "parentId"] as const) {
       const value = options[key];
       if (typeof value === "string" && value.trim()) query.set(key, value);
     }
@@ -349,14 +686,16 @@ export function registerIssueCommands(program: Command): void {
     const { api, json } = resolveClient(options);
     printOutput(await api.get(`/api/issues/${idPath(id)}`), json);
   }));
-  addCommonOptions(issue.command("create").description("Create an issue").requiredOption("--title <title>").option("--description <text>").option("--status <status>").option("--priority <priority>").option("--assignee-agent-id <id>").option("--project-id <id>").option("--goal-id <id>").option("--parent-id <id>").option("--verify", "Re-read the created issue"), true).action((options: AnyOptions) => withErrors(async () => {
+  addCommonOptions(issue.command("create").description("Create an issue").requiredOption("--title <title>").option("--description <text>").option("--status <status>").option("--priority <priority>").option("--assignee-agent-id <id>").option("--project-id <id>").option("--goal-id <id>").option("--parent-id <id>").option("--label-id <id>", "Label id; repeatable", collect, [] as string[]).option("--verify", "Re-read the created issue"), true).action((options: AnyOptions) => withErrors(async () => {
     const { api, companyId, json } = resolveClient(options, true);
-    const created = await api.post(`/api/companies/${idPath(companyId!)}/issues`, omitUndefined({ title: options.title, description: options.description, status: options.status, priority: options.priority, assigneeAgentId: options.assigneeAgentId, projectId: options.projectId, goalId: options.goalId, parentId: options.parentId }));
+    const labelIds = (options.labelId as string[]).map((value) => requireGuid(value, "--label-id"));
+    const created = await api.post(`/api/companies/${idPath(companyId!)}/issues`, guidFields(omitUndefined({ title: options.title, description: options.description, status: options.status, priority: options.priority, assigneeAgentId: options.assigneeAgentId, projectId: options.projectId, goalId: options.goalId, parentId: options.parentId, labelIds: labelIds.length ? labelIds : undefined }), { assigneeAgentId: "--assignee-agent-id", projectId: "--project-id", goalId: "--goal-id", parentId: "--parent-id" }));
     await printMutation(api, created, json, Boolean(options.verify), "/api/issues/:id");
   }));
-  addCommonOptions(issue.command("update <id>").description("Update an issue").option("--title <title>").option("--description <text>").option("--status <status>").option("--priority <priority>").option("--assignee-agent-id <id>").option("--project-id <id>").option("--goal-id <id>").option("--parent-id <id>").option("--comment <text>").option("--verify", "Re-read the updated issue"), false).action((id: string, options: AnyOptions) => withErrors(async () => {
+  addCommonOptions(issue.command("update <id>").description("Update an issue").option("--title <title>").option("--description <text>").option("--status <status>").option("--priority <priority>").option("--assignee-agent-id <id>").option("--project-id <id>").option("--goal-id <id>").option("--parent-id <id>").option("--label-id <id>", "Label id; repeatable", collect, [] as string[]).option("--comment <text>").option("--verify", "Re-read the updated issue"), false).action((id: string, options: AnyOptions) => withErrors(async () => {
     const { api, json } = resolveClient(options);
-    const updated = await api.patch(`/api/issues/${idPath(id)}`, omitUndefined({ title: options.title, description: options.description, status: options.status, priority: options.priority, assigneeAgentId: options.assigneeAgentId, projectId: options.projectId, goalId: options.goalId, parentId: options.parentId, comment: options.comment }));
+    const labelIds = (options.labelId as string[]).map((value) => requireGuid(value, "--label-id"));
+    const updated = await api.patch(`/api/issues/${idPath(id)}`, guidFields(omitUndefined({ title: options.title, description: options.description, status: options.status, priority: options.priority, assigneeAgentId: options.assigneeAgentId, projectId: options.projectId, goalId: options.goalId, parentId: options.parentId, comment: options.comment, labelIds: labelIds.length ? labelIds : undefined }), { assigneeAgentId: "--assignee-agent-id", projectId: "--project-id", goalId: "--goal-id", parentId: "--parent-id" }));
     await printMutation(api, updated, json, Boolean(options.verify), `/api/issues/${idPath(id)}`);
   }));
   addCommonOptions(issue.command("comment <id>").description("Add an issue comment").requiredOption("--body <text>").option("--reopen").option("--resume").option("--verify", "Re-read the issue")).action((id: string, options: AnyOptions) => withErrors(async () => {
@@ -370,7 +709,7 @@ export function registerIssueCommands(program: Command): void {
       ? parseCsv(options.expectedStatuses)
       : undefined;
     const result = await api.post(`/api/issues/${idPath(id)}/checkout`, {
-        agentId: String(options.agentId),
+        agentId: requireGuid(options.agentId, "--agent-id")!,
         expectedStatuses: expectedStatuses ?? ["todo", "backlog", "blocked"],
       });
     await printMutation(api, result, json, Boolean(options.verify), `/api/issues/${idPath(id)}`);
@@ -380,6 +719,29 @@ export function registerIssueCommands(program: Command): void {
     const result = await api.post(`/api/issues/${idPath(id)}/release`, {});
     await printMutation(api, result, json, Boolean(options.verify), `/api/issues/${idPath(id)}`);
   }));
+
+  addCommonOptions(issue.command("documents <id>").description("List an issue's documents")).action((id: string, options: AnyOptions) => withErrors(async () => {
+    const { api, json } = resolveClient(options);
+    printRows((await api.get<unknown[]>(`/api/issues/${idPath(id)}/documents`)) ?? [], json);
+  }));
+  addCommonOptions(issue.command("document <id>").description("Read one issue document").requiredOption("--key <key>", "Document key, for example plan")).action((id: string, options: AnyOptions) => withErrors(async () => {
+    const { api, json } = resolveClient(options);
+    printOutput(await api.get(`/api/issues/${idPath(id)}/documents/${idPath(String(options.key))}`), json);
+  }));
+  addCommonOptions(issue.command("attachments <id>").description("List an issue's attachments")).action((id: string, options: AnyOptions) => withErrors(async () => {
+    const { api, json } = resolveClient(options);
+    printRows((await api.get<unknown[]>(`/api/issues/${idPath(id)}/attachments`)) ?? [], json);
+  }));
+  for (const action of ["archive", "unarchive"] as const) {
+    addCommonOptions(
+      issue.command(`${action} <id>`).description(`${action === "archive" ? "Archive" : "Restore"} an issue in the board inbox`).option("--verify", "Re-read the issue"),
+    ).action((id: string, options: AnyOptions) => withErrors(async () => {
+      const { api, json } = resolveClient(options);
+      const path = `/api/issues/${idPath(id)}/inbox-archive`;
+      const result = action === "archive" ? await api.post(path, {}) : await api.delete(path);
+      await printMutation(api, result, json, Boolean(options.verify), `/api/issues/${idPath(id)}`);
+    }));
+  }
 }
 
 export function registerApprovalCommands(program: Command): void {
@@ -406,6 +768,31 @@ export function registerApprovalCommands(program: Command): void {
     const { api, json } = resolveClient(options);
     printOutput(await api.post(`/api/approvals/${idPath(id)}/comments`, { body: options.body }), json);
   }));
+  addCommonOptions(
+    approval.command("create").description("Create an approval request")
+      .requiredOption("--type <type>", "hire_agent | approve_ceo_strategy | budget_override_required | request_board_approval")
+      .requiredOption("--payload <json>", "Approval payload as JSON")
+      .option("--requested-by-agent-id <id>")
+      .option("--issue-id <id>", "Linked issue id; repeatable", collect, [] as string[]),
+    true,
+  ).action((options: AnyOptions) => withErrors(async () => {
+    const { api, companyId, json } = resolveClient(options, true);
+    const issueIds = (options.issueId as string[]).map((value) => requireGuid(value, "--issue-id"));
+    printOutput(await api.post(`/api/companies/${idPath(companyId!)}/approvals`, guidFields(omitUndefined({
+      type: options.type,
+      payload: parseJsonObject(String(options.payload), "--payload"),
+      requestedByAgentId: options.requestedByAgentId,
+      issueIds: issueIds.length ? issueIds : undefined,
+    }), { requestedByAgentId: "--requested-by-agent-id" })), json);
+  }));
+  addCommonOptions(
+    approval.command("resubmit <id>").description("Resubmit an approval with a new payload").option("--payload <json>", "Replacement payload as JSON").option("--verify", "Re-read the approval"),
+  ).action((id: string, options: AnyOptions) => withErrors(async () => {
+    const { api, json } = resolveClient(options);
+    const payload = typeof options.payload === "string" ? parseJsonObject(options.payload, "--payload") : undefined;
+    const result = await api.post(`/api/approvals/${idPath(id)}/resubmit`, omitUndefined({ payload }));
+    await printMutation(api, result, json, Boolean(options.verify), `/api/approvals/${idPath(id)}`);
+  }));
 }
 
 export function registerActivityAndDashboardCommands(program: Command): void {
@@ -429,6 +816,9 @@ export function registerActivityAndDashboardCommands(program: Command): void {
 export function registerHealthCommand(program: Command): void {
   addCommonOptions(program.command("health").description("Check API reachability")).action((options: AnyOptions) => withErrors(async () => {
     const { api, json } = resolveClient(options);
-    printOutput(await api.get("/api/health"), json);
+    const health = await api.get<{ version?: unknown }>("/api/health");
+    printOutput(health, json);
+    const assessment = assessServerVersion(health?.version);
+    if (assessment.message) console.error(`Compatibility: ${assessment.message}`);
   }));
 }

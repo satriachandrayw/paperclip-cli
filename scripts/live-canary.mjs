@@ -45,4 +45,6 @@ if (process.env.PAPERCLIP_COMPANY_ID) {
   await check("issue list", ["issue", "list", "--company-id", process.env.PAPERCLIP_COMPANY_ID]);
 }
 
+await check("openapi describe", ["api", "describe", "/api/health"]);
+
 console.log("live canary passed (read-only checks)");
